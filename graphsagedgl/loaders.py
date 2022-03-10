@@ -12,6 +12,8 @@ class JSONDatasetLoader(object):
         self.a2b_type = a2b_type
         self.b2a_type = b2a_type
         self.graph = None
+        self.train_graph = None
+        self.test_graph = None
 
     def create_graph(self):
         a2b = (self.a_type, self.a2b_type, self.b_type)
@@ -82,11 +84,36 @@ class JSONDatasetLoader(object):
                     numericalized.append([vocab[token] for token in tokenizer(x)])
                     if len(numericalized[-1]) > max_len:
                         max_len = len(numericalized[-1])
-                padded = torch.zeros(len(numericalized), max_len)
+                padded = torch.zeros(len(numericalized), max_len) - 1
                 for i, x in enumerate(numericalized):
                     padded[i, :len(x)] = torch.IntTensor(x)
                 self.graph.edges[self.a2b_type].data[feature_name] = padded
                 self.graph.edges[self.b2a_type].data[feature_name] = padded
+
+    def train_test_split(self, nodes_to_split, test_size=.2):
+        if nodes_to_split not in [self.a_type, self.b_type]:
+            raise ValueError(f"nodes_to_split must be either '{self.a_type}' or '{self.b_type}'")
+        if nodes_to_split == self.a_type:
+            nodes_to_keep = self.b_type
+        else:
+            nodes_to_keep = self.a_type
+
+        total_size = self.graph.nodes(nodes_to_split).size(0)
+        if type(test_size) == float:
+            test_size = int(test_size * total_size)
+        if test_size > total_size:
+            raise ValueError(f"test_size must be less than {total_size}")
+        train_size = total_size - test_size
+        perm = torch.randperm(total_size)
+        train_idx = perm[:train_size]
+        test_idx = perm[train_size:]
+        self.train_graph = self.graph.subgraph(
+            {nodes_to_split: train_idx, nodes_to_keep: self.graph.nodes(nodes_to_keep)}
+        )
+        self.test_graph = self.graph.subgraph(
+            {nodes_to_split: test_idx, nodes_to_keep: self.graph.nodes(nodes_to_keep)}
+        )
+        return self.train_graph, self.test_graph
 
 
 class RedditDatasetLoader(JSONDatasetLoader):
@@ -96,3 +123,6 @@ class RedditDatasetLoader(JSONDatasetLoader):
     def add_reddit_features(self):
         feature_names = ['body']
         self.add_features(feature_names)
+
+    def train_test_split(self, test_size=.2):
+        return super().train_test_split('author', test_size)
